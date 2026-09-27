@@ -55,6 +55,48 @@ Caller/Chat ──▶ n8n (AI Agent node, Claude) ──▶ Apex REST API ──
    distributed through the public AppExchange marketplace search — it's
    only reachable via that direct link.
 
+## Setup so far (Phase 2)
+
+Field Service configuration and seed data are fully scripted and idempotent —
+rerun any time with:
+
+```
+cd summit-plumbing-ai-receptionist
+./scripts/setup-phase2.sh summit-plumbing
+```
+
+This creates (or confirms already exists, if rerun):
+
+- **Operating Hours** "Metro Vancouver Business Hours" (`America/Vancouver`
+  timezone) with time slots Mon–Fri 8am–5pm, Sat 9am–1pm.
+- **Service Territory** "Metro Vancouver" (800 Robson St, Vancouver, BC).
+- **4 Service Resources** (technicians): Dave Chen, Maria Santos,
+  Kevin O'Brien, Priya Patel — each backed by a dedicated User record
+  (Salesforce Platform license, `Standard Platform User` profile) that never
+  logs in; it exists only so `ServiceResource.RelatedRecordId` has something
+  to point to. All 4 are Primary members of Metro Vancouver.
+- **4 Work Types**: Drain Cleaning (1h), Water Heater Install (3h), Leak
+  Repair (2h), Emergency Call-out (1.5h) — linked to the territory.
+- **30 seed customers** (Account + Contact + address) spread across
+  Vancouver, Richmond, Burnaby, Coquitlam, New Westminster, North/West
+  Vancouver, Surrey, Delta, and Langley.
+- **17 seed appointments** (WorkOrder + ServiceAppointment + AssignedResource)
+  spread across the next 7 days and all 4 technicians, so the calendar isn't
+  empty for the demo.
+
+Scripts live at `summit-plumbing-ai-receptionist/scripts/apex/setup/01`–`05`
+and are individually idempotent (each checks for existing records before
+creating). Note: this seed data writes `ServiceAppointment` times directly,
+which is fine for pre-existing historical demo data — the Phase 3 Apex REST
+API that the AI agent calls must **not** do this; it has to go through
+`FSL.ScheduleService` / `FSL.AppointmentBookingService`.
+
+**Nothing needed manual UI setup for this phase** — the FSL managed package
+already ships 4 default Scheduling Policies (Customer First, High Intensity,
+Soft Boundaries, Emergency) which Phase 3 will use for `FSL.ScheduleService`
+calls. "Emergency" conveniently lines up with the "Emergency Call-out" work
+type for later test scenarios.
+
 ## Running the demo
 
 _(To be filled in as later phases land: Apex deploy, auth setup, n8n import,
