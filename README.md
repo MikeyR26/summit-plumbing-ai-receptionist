@@ -151,6 +151,65 @@ this in a real org.
   no need to insert it manually.
 - `WorkType.TimeframeStart`/`TimeframeEnd` must be set (we use 0–14 days) or
   `getSlots` searches a zero-width window and always returns empty.
+- `AppointmentBookingSlot.interval.Start`/`.Finish` come back as **wall-clock
+  values in the requested timezone, stuffed into the Datetime's UTC fields
+  uncorrected** — e.g. an intended Pacific "8:00 AM" slot comes back
+  internally labeled as UTC 08:00, not the true UTC instant (15:00 during
+  PDT). Left uncorrected, displayed times are off by exactly the UTC offset.
+  Fix: `slot.interval.Start.addSeconds(tz.getOffset(slot.interval.Start) / -1000)`.
+  Found by comparing displayed slot times against known operating hours.
+
+## Phase 3 — Apex REST API
+
+`force-app/main/default/classes/` implements the agent-facing API at
+`/services/apexrest/agent/v1/*`:
+
+| Endpoint | Purpose |
+|---|---|
+| `lookupCustomer` | Find an existing customer by phone or email |
+| `createCustomer` | Create Account + Contact + address (rejects out-of-territory cities) |
+| `getSlots` | Get available appointment slots for a job type |
+| `bookAppointment` | Book a chosen slot |
+| `rescheduleAppointment` | Move an existing appointment to a new slot |
+| `cancelAppointment` | Cancel an appointment |
+
+**Architecture**: `IFieldServiceScheduler` is the seam around the FSL managed
+package. `FSLFieldServiceScheduler` is the real implementation (calls
+`FSL.AppointmentBookingService`/`FSL.ScheduleService`); `MockFieldServiceScheduler`
+is what tests inject instead, via `FieldServiceSchedulerFactory`. Each REST
+endpoint is a thin `@RestResource` class that parses the JSON body, delegates
+to `AgentCustomerService` or `AgentSchedulingService`, and maps exceptions to
+HTTP status codes (`AgentApiException` → 400, `AgentOutsideTerritoryException`
+→ 422). Responses are `{"ok": true, "data": {...}}` or
+`{"ok": false, "error": "...", "code": "..."}`.
+
+**`getSlots` is a two-call flow, not one.** `FSL.AppointmentBookingService.getSlots`
+performs a real callout, which can't happen in the same transaction as the
+DML that creates the draft WorkOrder/ServiceAppointment (see "Verified FSL
+Apex behavior" above). So:
+1. Call `getSlots` with `customerId` + `jobType` (no `serviceAppointmentId`) →
+   creates the draft appointment, returns `{"status": "pending", "serviceAppointmentId": "..."}`.
+2. Call `getSlots` again with that `serviceAppointmentId` → returns
+   `{"status": "ready", "slots": [...]}` with real availability.
+
+This will be hidden from the AI agent in Phase 5 — the n8n sub-workflow does
+both calls internally and exposes one clean `get_available_slots` tool.
+`rescheduleAppointment` doesn't need this two-step dance for its "list new
+slots" mode, since the appointment already exists from a prior transaction.
+
+**Tests**: `AgentCustomerServiceTest`, `AgentSchedulingServiceTest`, and
+`AgentApiRestTest` (33 tests total, 81% org-wide coverage). One real gotcha
+found while writing them: `ServiceAppointment.Status` updates threw "fields
+being inaccessible" in test context (but not live, run as the same admin
+user) — fixed by using `Database.update(record, AccessLevel.SYSTEM_MODE)`
+for the cancel operation, which is the correct pattern for backend service
+Apex regardless of the underlying cause.
+
+Deploy + test:
+```
+cd summit-plumbing-ai-receptionist
+sf project deploy start --source-dir force-app/main/default/classes --test-level RunLocalTests --target-org summit-plumbing
+```
 
 ## Running the demo
 
