@@ -1,0 +1,79 @@
+{
+  "name": "SF - Get Available Slots",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "customerId" },
+            { "name": "jobType" }
+          ]
+        }
+      },
+      "id": "a1b2c303-0001-4000-8000-000000000001",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "method": "POST",
+        "url": "={{ $env.SF_INSTANCE_URL }}/services/apexrest/agent/v1/getSlots",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ customerId: $json.customerId, jobType: $json.jobType }) }}",
+        "options": {}
+      },
+      "id": "a1b2c303-0001-4000-8000-000000000002",
+      "name": "Create Draft Appointment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "salesforce-agent-oauth2",
+          "name": "Salesforce Agent API (Client Credentials)"
+        }
+      },
+      "notes": "Step 1 of 2 (hidden from the agent): Salesforce's getSlots must create the draft ServiceAppointment in its own transaction before the slot-lookup callout can run -- see README Phase 3 notes. This sub-workflow does both calls so the agent only ever sees one clean tool."
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "method": "POST",
+        "url": "={{ $env.SF_INSTANCE_URL }}/services/apexrest/agent/v1/getSlots",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ serviceAppointmentId: $json.data.serviceAppointmentId }) }}",
+        "options": {}
+      },
+      "id": "a1b2c303-0001-4000-8000-000000000003",
+      "name": "Fetch Real Slots",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "salesforce-agent-oauth2",
+          "name": "Salesforce Agent API (Client Credentials)"
+        }
+      },
+      "notes": "Step 2 of 2: now that the ServiceAppointment from step 1 is committed, this call can safely trigger FSL's slot-grading callout."
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [[{ "node": "Create Draft Appointment", "type": "main", "index": 0 }]]
+    },
+    "Create Draft Appointment": {
+      "main": [[{ "node": "Fetch Real Slots", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

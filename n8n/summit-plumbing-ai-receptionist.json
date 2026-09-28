@@ -1,0 +1,234 @@
+{
+  "name": "Summit Plumbing AI Receptionist",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "b2c3d400-0001-4000-8000-000000000001",
+      "name": "When chat message received",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 400],
+      "webhookId": "summit-plumbing-chat"
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-5",
+        "options": {}
+      },
+      "id": "b2c3d400-0001-4000-8000-000000000002",
+      "name": "Anthropic Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [400, 620],
+      "credentials": {
+        "anthropicApi": {
+          "id": "anthropic-api",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.sessionId }}",
+        "contextWindowLength": 20
+      },
+      "id": "b2c3d400-0001-4000-8000-000000000003",
+      "name": "Conversation Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [560, 620]
+    },
+    {
+      "parameters": {
+        "promptType": "auto",
+        "options": {
+          "systemMessage": "You are the AI receptionist for Summit Plumbing, a plumbing company serving Metro Vancouver, BC. Callers reach you by phone or chat when they need a plumber. Your job is to help them book, reschedule, or cancel a service visit -- warmly, efficiently, and honestly.\n\nTONE: Friendly, calm, and professional -- like a good human receptionist who's done this a thousand times. Plain, conversational language, not corporate scripting. Keep responses short; you're often talking to someone on the phone. Never read out raw data (IDs, ISO timestamps, JSON) to the caller.\n\nWHAT YOU COLLECT: For a new customer: name (first and last), phone number (and email if offered), full service address (street, city, postal code if they have it), and a description of the problem in their own words. For a returning customer, always try lookup_customer first using their phone number (or email). If found, greet them by name and confirm the address on file rather than asking again -- e.g. 'I've got you at 1421 Commercial Drive in Vancouver, is that still the right spot?' Only ask for a new address if they say they've moved.\n\nJOB TYPES: Summit Plumbing books four kinds of visits -- Drain Cleaning (clogged/slow drain, backed-up sink or tub), Water Heater Install (new water heater or one that needs replacing), Leak Repair (dripping faucet, leaking pipe, damp spot, running toilet), and Emergency Call-out (urgent, can't-wait issues that aren't full safety emergencies). If the description is vague, ask one or two short clarifying questions before picking a job type. If still unsure, say so and offer a human follow-up rather than guessing.\n\nBOOKING FLOW: 1) Identify or create the customer (lookup_customer, then create_customer if not found). 2) Call get_available_slots once you know the job type and customer ID. 3) Never invent availability -- only offer times the tool actually returns; if it's empty, say so honestly and offer a human follow-up. 4) Read back 2-3 of the soonest options in natural language, not a robotic list. 5) Confirm every detail back to the caller (name, address, what the visit is for, chosen day/time) and get a clear yes before calling book_appointment. 6) After booking, give the confirmation number and technician's name in plain speech, plus the arrival window, and mention they can call back to reschedule or cancel.\n\nRESCHEDULE/CANCEL: Ask for the confirmation number, or look up by phone if they don't have it. For reschedule, call reschedule_appointment once with just the confirmation number to see new options, confirm their choice, then call it again with the chosen time to commit. For cancellation, confirm which appointment before calling cancel_appointment -- it isn't undoable through you.\n\nSERVICE AREA: Metro Vancouver only -- Vancouver, Richmond, Burnaby, Coquitlam, New Westminster, North Vancouver, West Vancouver, Surrey, Delta, Langley. If create_customer reports the address is outside the service area, say so plainly and kindly, don't try to book anyway, and suggest they search for a local plumber.\n\nEMERGENCIES -- ESCALATE TO A HUMAN: If a caller mentions flooding or active water damage, a burst pipe, a smell of gas, or a complete loss of water with no clear cause, stop the normal booking flow immediately. Respond with urgency and empathy. For a gas smell, tell them to leave the building and call their gas utility or 911 before anything else. For flooding or a burst pipe, tell them to shut off the main water valve if they know how and it's safe to do so. Do not try to book this through the normal flow -- say clearly you're connecting them with a person right now and hand off to a human. A normal urgent-but-not-dangerous issue (no hot water, a contained leak) can still be booked as Emergency Call-out through the normal flow -- reserve full escalation for genuine safety situations.\n\nOTHER HANDOFFS TO A HUMAN: Price quotes (you don't have pricing information -- say it depends on what the technician finds on-site and offer a callback). Billing questions, complaints, or anything outside booking/rescheduling/canceling. Any tool error you can't resolve by trying once more -- after a genuine 'outside service area' or 'no slots' response, don't keep retrying; explain and offer a human follow-up.\n\nGUARDRAILS: Never fabricate customer records, appointment times, technician names, or confirmation numbers -- everything you tell a caller must come from a tool result. Never expose internal details (record IDs, raw JSON, error codes, object names like ServiceAppointment or WorkOrder) to the caller -- translate everything into plain speech. If a tool call returns an error, don't repeat the raw error message verbatim -- explain what it means and suggest next steps."
+        }
+      },
+      "id": "b2c3d400-0001-4000-8000-000000000004",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.9,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "name": "lookup_customer",
+        "description": "Look up an existing customer by phone number or email. Returns found=true/false, and if found: customerId, accountId, name, phone, email, address. Always try this before creating a new customer.",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_SF_LOOKUP_CUSTOMER_WORKFLOW_ID",
+          "mode": "list",
+          "cachedResultName": "SF - Lookup Customer"
+        },
+        "workflowInputs": {
+          "value": {
+            "phone": "={{ $fromAI('phone', 'Customer phone number as given, e.g. 604-555-0101. Omit if searching by email instead.', 'string') }}",
+            "email": "={{ $fromAI('email', 'Customer email address. Omit if searching by phone instead.', 'string') }}"
+          }
+        }
+      },
+      "id": "b2c3d400-0001-4000-8000-000000000005",
+      "name": "lookup_customer",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [720, 560]
+    },
+    {
+      "parameters": {
+        "name": "create_customer",
+        "description": "Create a new customer record with their name, contact info, and service address. Fails with an outside-service-area message if the city isn't in Summit Plumbing's Metro Vancouver territory. Returns customerId and accountId on success.",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_SF_CREATE_CUSTOMER_WORKFLOW_ID",
+          "mode": "list",
+          "cachedResultName": "SF - Create Customer"
+        },
+        "workflowInputs": {
+          "value": {
+            "firstName": "={{ $fromAI('firstName', 'Customer first name', 'string') }}",
+            "lastName": "={{ $fromAI('lastName', 'Customer last name', 'string') }}",
+            "phone": "={{ $fromAI('phone', 'Customer phone number', 'string') }}",
+            "email": "={{ $fromAI('email', 'Customer email address, if given', 'string') }}",
+            "street": "={{ $fromAI('street', 'Street address, e.g. 1421 Commercial Dr', 'string') }}",
+            "city": "={{ $fromAI('city', 'City, e.g. Vancouver, Richmond, Burnaby', 'string') }}",
+            "postalCode": "={{ $fromAI('postalCode', 'Postal code, if given', 'string') }}"
+          }
+        }
+      },
+      "id": "b2c3d400-0001-4000-8000-000000000006",
+      "name": "create_customer",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [880, 560]
+    },
+    {
+      "parameters": {
+        "name": "get_available_slots",
+        "description": "Get available appointment slots for a customer and job type. jobType must be exactly one of: Drain Cleaning, Water Heater Install, Leak Repair, Emergency Call-out. Returns a list of slots with human-readable start/end times (in start/end) and machine-readable ISO times (startIso/endIso) to use when booking. If slots is empty, no availability was found -- do not invent times.",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_SF_GET_AVAILABLE_SLOTS_WORKFLOW_ID",
+          "mode": "list",
+          "cachedResultName": "SF - Get Available Slots"
+        },
+        "workflowInputs": {
+          "value": {
+            "customerId": "={{ $fromAI('customerId', 'The customerId returned by lookup_customer or create_customer', 'string') }}",
+            "jobType": "={{ $fromAI('jobType', 'One of: Drain Cleaning, Water Heater Install, Leak Repair, Emergency Call-out', 'string') }}"
+          }
+        }
+      },
+      "id": "b2c3d400-0001-4000-8000-000000000007",
+      "name": "get_available_slots",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1040, 560]
+    },
+    {
+      "parameters": {
+        "name": "book_appointment",
+        "description": "Book a specific appointment slot after the caller has confirmed all details (name, address, job type, and chosen time). Use the exact serviceAppointmentId from get_available_slots and the exact startIso/endIso of the chosen slot. Returns confirmationNumber, technician name, and start/end time on success.",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_SF_BOOK_APPOINTMENT_WORKFLOW_ID",
+          "mode": "list",
+          "cachedResultName": "SF - Book Appointment"
+        },
+        "workflowInputs": {
+          "value": {
+            "serviceAppointmentId": "={{ $fromAI('serviceAppointmentId', 'The serviceAppointmentId from get_available_slots', 'string') }}",
+            "slotStartIso": "={{ $fromAI('slotStartIso', 'The startIso of the chosen slot from get_available_slots', 'string') }}",
+            "slotEndIso": "={{ $fromAI('slotEndIso', 'The endIso of the chosen slot from get_available_slots', 'string') }}"
+          }
+        }
+      },
+      "id": "b2c3d400-0001-4000-8000-000000000008",
+      "name": "book_appointment",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1200, 560]
+    },
+    {
+      "parameters": {
+        "name": "reschedule_appointment",
+        "description": "Reschedule an existing appointment. Call with just confirmationNumber to list new available slots (do not include slotStartIso/slotEndIso). Call a second time with confirmationNumber plus the chosen slotStartIso/slotEndIso to actually commit the change, once the caller has confirmed.",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_SF_RESCHEDULE_APPOINTMENT_WORKFLOW_ID",
+          "mode": "list",
+          "cachedResultName": "SF - Reschedule Appointment"
+        },
+        "workflowInputs": {
+          "value": {
+            "confirmationNumber": "={{ $fromAI('confirmationNumber', 'The appointment confirmation number, e.g. SA-0031', 'string') }}",
+            "slotStartIso": "={{ $fromAI('slotStartIso', 'Chosen new slot start time (ISO). Omit on the first call.', 'string') }}",
+            "slotEndIso": "={{ $fromAI('slotEndIso', 'Chosen new slot end time (ISO). Omit on the first call.', 'string') }}"
+          }
+        }
+      },
+      "id": "b2c3d400-0001-4000-8000-000000000009",
+      "name": "reschedule_appointment",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1360, 560]
+    },
+    {
+      "parameters": {
+        "name": "cancel_appointment",
+        "description": "Cancel an existing appointment by confirmation number, once the caller has confirmed they want to cancel. This cannot be undone.",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_SF_CANCEL_APPOINTMENT_WORKFLOW_ID",
+          "mode": "list",
+          "cachedResultName": "SF - Cancel Appointment"
+        },
+        "workflowInputs": {
+          "value": {
+            "confirmationNumber": "={{ $fromAI('confirmationNumber', 'The appointment confirmation number, e.g. SA-0031', 'string') }}"
+          }
+        }
+      },
+      "id": "b2c3d400-0001-4000-8000-00000000000a",
+      "name": "cancel_appointment",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [1520, 560]
+    }
+  ],
+  "connections": {
+    "When chat message received": {
+      "main": [[{ "node": "AI Agent", "type": "main", "index": 0 }]]
+    },
+    "Anthropic Chat Model": {
+      "ai_languageModel": [[{ "node": "AI Agent", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Conversation Memory": {
+      "ai_memory": [[{ "node": "AI Agent", "type": "ai_memory", "index": 0 }]]
+    },
+    "lookup_customer": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "create_customer": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "get_available_slots": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "book_appointment": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "reschedule_appointment": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "cancel_appointment": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

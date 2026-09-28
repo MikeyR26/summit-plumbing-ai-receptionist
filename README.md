@@ -315,6 +315,70 @@ integration user: lookup → get slots → book (assigned Dave Chen, confirmatio
 `SA-0034`) → cancel, plus an outside-territory `createCustomer` call
 correctly returning a 422.
 
+## Phase 5 — n8n workflow
+
+`n8n/` holds 7 importable workflow JSON files: one orchestrator
+(`summit-plumbing-ai-receptionist.json`) with the Claude AI Agent node, and
+6 sub-workflows (`sf-*.json`), one per Apex REST endpoint.
+
+**Why sub-workflows, not raw HTTP tools directly on the agent**: `getSlots`
+is a two-call flow at the Apex layer (see Phase 3) — create a draft
+appointment, then fetch real slots in a second call, because FSL's slot
+lookup performs a callout that can't share a transaction with the DML that
+creates the appointment. `sf-get-available-slots.json` does both HTTP calls
+internally and returns only the final result, so the agent only ever sees
+one clean `get_available_slots` tool — it never needs to know the two-step
+dance happened.
+
+### Import order and setup
+
+1. **Create two n8n credentials first** (Settings → Credentials → New):
+   - **Anthropic API** — your Claude API key. Reference this name exactly:
+     `Anthropic API`.
+   - **Generic OAuth2 API**, named exactly `Salesforce Agent API (Client
+     Credentials)`:
+     - Grant Type: `Client Credentials`
+     - Access Token URL: `<your SF_INSTANCE_URL>/services/oauth2/token`
+     - Client ID / Client Secret: from your `.env` (`SF_CLIENT_ID` /
+       `SF_CLIENT_SECRET`)
+     - Scope: `api`
+   - n8n then handles token fetching and caching/refresh automatically —
+     no custom caching logic needed.
+2. **Set the `SF_INSTANCE_URL` environment variable** in your n8n Cloud
+   instance (Settings → Variables), matching your `.env` value. Every
+   sub-workflow's HTTP Request node reads `{{ $env.SF_INSTANCE_URL }}`.
+3. **Import the 6 `sf-*.json` sub-workflows first**, one at a time
+   (Workflows → Import from File). Each has 2 nodes (or 3 for
+   `sf-get-available-slots.json`) — trigger + HTTP Request(s) — and should
+   need no edits beyond confirming the OAuth2 credential attached correctly
+   (n8n may ask you to reselect it after import, since credential IDs are
+   instance-specific).
+4. **Import `summit-plumbing-ai-receptionist.json` last.**
+5. **Wire up the 6 tool nodes to the sub-workflows you just imported.** Each
+   tool node (`lookup_customer`, `create_customer`, `get_available_slots`,
+   `book_appointment`, `reschedule_appointment`, `cancel_appointment`) has
+   its `workflowId` set to a placeholder like
+   `REPLACE_WITH_SF_LOOKUP_CUSTOMER_WORKFLOW_ID` — open each tool node and
+   use the workflow picker to select the matching imported sub-workflow
+   (this is a standard n8n limitation: sub-workflow IDs are assigned at
+   import time and can't be known in advance).
+6. Confirm the **Anthropic Chat Model** node's credential points at your
+   `Anthropic API` credential, and the model name (`claude-sonnet-5` by
+   default) is one you have access to.
+7. Test in n8n's built-in chat panel before wiring up a real voice/chat
+   channel.
+
+### System prompt
+
+`n8n/system-prompt.md` is the source of truth (also embedded directly in
+the AI Agent node's system message on import). Covers: friendly receptionist
+tone, the new-vs-returning-customer flow, mapping described problems to one
+of the 4 job types, never inventing availability, confirming details before
+booking, Metro Vancouver-only territory handling, and escalating genuine
+safety emergencies (flooding, gas smell, total water loss) to a human rather
+than attempting to book them — as distinct from urgent-but-safe issues,
+which book normally as "Emergency Call-out".
+
 ## Secrets
 
 All credentials (Salesforce OAuth client ID/secret, Claude API key, etc.)

@@ -1,0 +1,53 @@
+{
+  "name": "SF - Reschedule Appointment",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "confirmationNumber" },
+            { "name": "slotStartIso" },
+            { "name": "slotEndIso" }
+          ]
+        }
+      },
+      "id": "a1b2c305-0001-4000-8000-000000000001",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "method": "POST",
+        "url": "={{ $env.SF_INSTANCE_URL }}/services/apexrest/agent/v1/rescheduleAppointment",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ confirmationNumber: $json.confirmationNumber, slotStartIso: $json.slotStartIso || null, slotEndIso: $json.slotEndIso || null }) }}",
+        "options": {}
+      },
+      "id": "a1b2c305-0001-4000-8000-000000000002",
+      "name": "Call Salesforce",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "salesforce-agent-oauth2",
+          "name": "Salesforce Agent API (Client Credentials)"
+        }
+      },
+      "notes": "Omit slotStartIso/slotEndIso to list new available slots (status 'ready'); include them to actually commit the move. The agent should call this tool twice: once with just confirmationNumber to see options, once more with a chosen slot to confirm."
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [[{ "node": "Call Salesforce", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

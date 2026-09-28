@@ -1,0 +1,56 @@
+{
+  "name": "SF - Create Customer",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "firstName" },
+            { "name": "lastName" },
+            { "name": "phone" },
+            { "name": "email" },
+            { "name": "street" },
+            { "name": "city" },
+            { "name": "postalCode" }
+          ]
+        }
+      },
+      "id": "a1b2c302-0001-4000-8000-000000000001",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "method": "POST",
+        "url": "={{ $env.SF_INSTANCE_URL }}/services/apexrest/agent/v1/createCustomer",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ firstName: $json.firstName, lastName: $json.lastName, phone: $json.phone, email: $json.email, street: $json.street, city: $json.city, postalCode: $json.postalCode }) }}",
+        "options": {}
+      },
+      "id": "a1b2c302-0001-4000-8000-000000000002",
+      "name": "Call Salesforce",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "salesforce-agent-oauth2",
+          "name": "Salesforce Agent API (Client Credentials)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [[{ "node": "Call Salesforce", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}
