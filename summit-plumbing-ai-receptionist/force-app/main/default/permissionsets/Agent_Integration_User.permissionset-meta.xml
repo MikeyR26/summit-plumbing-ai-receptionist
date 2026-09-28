@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>Agent Integration User</label>
+    <description>Minimum permissions for the AI receptionist's OAuth integration user: execute access to the Agent REST API classes. Apex runs in system mode, so no broad object/field access is granted.</description>
+    <classAccesses>
+        <apexClass>AgentLookupCustomerResource</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>AgentCreateCustomerResource</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>AgentGetSlotsResource</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>AgentBookAppointmentResource</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>AgentRescheduleAppointmentResource</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>AgentCancelAppointmentResource</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <userPermissions>
+        <enabled>true</enabled>
+        <name>ApiEnabled</name>
+    </userPermissions>
+</PermissionSet>

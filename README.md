@@ -198,12 +198,35 @@ both calls internally and exposes one clean `get_available_slots` tool.
 slots" mode, since the appointment already exists from a prior transaction.
 
 **Tests**: `AgentCustomerServiceTest`, `AgentSchedulingServiceTest`, and
-`AgentApiRestTest` (33 tests total, 81% org-wide coverage). One real gotcha
-found while writing them: `ServiceAppointment.Status` updates threw "fields
-being inaccessible" in test context (but not live, run as the same admin
-user) — fixed by using `Database.update(record, AccessLevel.SYSTEM_MODE)`
-for the cancel operation, which is the correct pattern for backend service
-Apex regardless of the underlying cause.
+`AgentApiRestTest` (33 tests total, 81% org-wide coverage).
+
+**Important platform finding, discovered in Phase 4 while testing with the
+real OAuth integration user (not the admin session used to build everything
+else):** this Summer '26 org enforces CRUD/FLS by default for plain Apex
+SOQL/DML — `[SELECT ...]`, `insert`, `update` — for a non-admin user, unlike
+the classic Apex default of bypassing FLS/CRUD unless you opt in via `WITH
+SECURITY_ENFORCED`. This first showed up as `ServiceAppointment.Status`
+updates failing with "fields being inaccessible" in **test context only**
+(same admin user, but Apex tests apparently enforce this even when live
+execution as that user didn't) — the initial, narrower fix was
+`Database.update(record, AccessLevel.SYSTEM_MODE)` on that one path. Once we
+built the actual low-privilege integration user for Phase 4 and called the
+API for real, the same issue appeared everywhere: `AgentConfig` couldn't
+even see `WorkType`/`ServiceTerritory` records under `with sharing`. The
+real fix was systemic: every service class (`AgentConfig`,
+`AgentCustomerService`, `AgentSchedulingService`, `FSLFieldServiceScheduler`)
+is now `without sharing`, and every SOQL/DML statement explicitly declares
+`WITH SYSTEM_MODE` / `AccessLevel.SYSTEM_MODE`. This is the architecturally
+correct pattern for a backend integration API regardless of the underlying
+platform-default question — the API enforces its own business rules
+(territory checks, job type validation), not the calling user's raw object
+permissions. **Lesson**: test integration APIs with the actual low-privilege
+credential they'll run under, not just the admin session used to build them
+— several bugs here were invisible until we did.
+
+Note on `WITH SYSTEM_MODE` placement: it must come before `LIMIT`, not
+after, or you get a confusing cascade of "Extra ';'" / "Variable does not
+exist: WITH" compile errors.
 
 Deploy + test:
 ```
@@ -211,13 +234,89 @@ cd summit-plumbing-ai-receptionist
 sf project deploy start --source-dir force-app/main/default/classes --test-level RunLocalTests --target-org summit-plumbing
 ```
 
+## Phase 4 — Authentication
+
+**Integration user** (`scripts/apex/setup/06_integration_user.apex`, idempotent):
+a dedicated User (`agent.integration@...`) the AI agent authenticates as.
+Two profiles failed before landing on one that works — see the script's
+comments for why ("Minimum Access - API Only Integrations" hit a default
+Visualforce-page validation bug; "Standard Platform User" — the same
+profile the technicians use fine — hit an Entitlement Management permission
+error that didn't happen earlier in the session, suggesting something about
+Field Service enablement changed org-wide default new-user behavior).
+Settled on **"Standard User"** (full Salesforce license).
+
+Assigned to this user:
+- **`Agent_Integration_User`** (custom permission set, in
+  `force-app/main/default/permissionsets/`) — Apex class access to the 6
+  REST resource classes, plus API Enabled. Deliberately minimal: since the
+  service layer runs in system mode, this user doesn't need object/field
+  CRUD grants for the API to function.
+- **`FSL_Agent_Permissions`** + **`FSL_Agent_License`** ("Field Service Call
+  Center Rep") — required for `FSL.ScheduleService`/`AppointmentBookingService`
+  to work at all; these enforce their own permission checks independent of
+  Apex system mode (see Phase 1/3 findings).
+
+**External Client App** (manual UI setup — OAuth apps can't be scripted):
+1. Setup → App Manager → **New External Client App**.
+2. Name: `Summit Plumbing AI Agent`. Enable OAuth.
+3. Callback URL: any placeholder (e.g. `https://login.salesforce.com/services/oauth2/success`)
+   — required by the form but unused by Client Credentials Flow.
+4. OAuth Scope: **`api`** only ("Manage user data via APIs").
+5. Flow Enablement: check **Enable Client Credentials Flow** only.
+6. Create, then go to the app's **Policies** tab → Edit → under "OAuth Flows
+   and External Client App Enhancements", check **Enable Client Credentials
+   Flow** again (a separate toggle from the creation form) → set **Run As**
+   to the integration user's username. Save.
+7. Settings tab → Consumer Key and Secret → copy both into `.env` (see
+   `.env.example`; never commit the real `.env`).
+
 ## Running the demo
 
-_(To be filled in as later phases land: Apex deploy, auth setup, n8n import,
-test scenarios.)_
+Get a token and call any endpoint:
+```bash
+# .env holds SF_INSTANCE_URL, SF_CLIENT_ID, SF_CLIENT_SECRET
+set -a; source .env; set +a
+
+TOKEN=$(curl -s -X POST "${SF_INSTANCE_URL}/services/oauth2/token" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=${SF_CLIENT_ID}" \
+  -d "client_secret=${SF_CLIENT_SECRET}" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+
+# Look up a customer
+curl -s -X POST "${SF_INSTANCE_URL}/services/apexrest/agent/v1/lookupCustomer" \
+  -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+  -d '{"phone": "604-555-0101"}'
+
+# Get slots: first call creates a draft appointment (status "pending")
+curl -s -X POST "${SF_INSTANCE_URL}/services/apexrest/agent/v1/getSlots" \
+  -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+  -d '{"customerId": "<contactId from lookupCustomer>", "jobType": "Drain Cleaning"}'
+
+# ...then call again with the returned serviceAppointmentId for real slots (status "ready")
+curl -s -X POST "${SF_INSTANCE_URL}/services/apexrest/agent/v1/getSlots" \
+  -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+  -d '{"serviceAppointmentId": "<id from previous call>"}'
+
+# Book a slot (use startIso/endIso from the slots list above)
+curl -s -X POST "${SF_INSTANCE_URL}/services/apexrest/agent/v1/bookAppointment" \
+  -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+  -d '{"serviceAppointmentId": "<id>", "slotStartIso": "2026-09-28T15:00:00Z", "slotEndIso": "2026-09-29T00:00:00Z"}'
+
+# Cancel (by confirmationNumber, e.g. "SA-0034", returned from bookAppointment)
+curl -s -X POST "${SF_INSTANCE_URL}/services/apexrest/agent/v1/cancelAppointment" \
+  -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+  -d '{"confirmationNumber": "SA-0034"}'
+```
+
+Verified working end-to-end against the live org with the real OAuth
+integration user: lookup → get slots → book (assigned Dave Chen, confirmation
+`SA-0034`) → cancel, plus an outside-territory `createCustomer` call
+correctly returning a 422.
 
 ## Secrets
 
-All credentials (Salesforce connected app client ID/secret, Claude API key,
-etc.) live in a gitignored `.env` file — never hardcoded. See
-`summit-plumbing-ai-receptionist/.gitignore`.
+All credentials (Salesforce OAuth client ID/secret, Claude API key, etc.)
+live in a gitignored `.env` file — never hardcoded. Copy `.env.example` to
+`.env` and fill in real values. See `summit-plumbing-ai-receptionist/.gitignore`.

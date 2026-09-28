@@ -6,13 +6,15 @@
 // ServiceAppointment throws "You have uncommitted work pending" (verified by hand before
 // writing this class). Callers must split appointment creation and slot lookup across two
 // separate Apex REST invocations.
-public with sharing class FSLFieldServiceScheduler implements IFieldServiceScheduler {
+// without sharing: same reasoning as AgentSchedulingService -- backend integration API.
+public without sharing class FSLFieldServiceScheduler implements IFieldServiceScheduler {
 
     public List<AgentSlot> getAvailableSlots(Id serviceAppointmentId, Id schedulingPolicyId) {
         ServiceAppointment sa = [
             SELECT Id, ServiceTerritory.OperatingHoursId
             FROM ServiceAppointment
             WHERE Id = :serviceAppointmentId
+            WITH SYSTEM_MODE
             LIMIT 1
         ];
 
@@ -49,7 +51,7 @@ public with sharing class FSLFieldServiceScheduler implements IFieldServiceSched
             ArrivalWindowStartTime = windowStart,
             ArrivalWindowEndTime = windowEnd
         );
-        update sa;
+        Database.update(sa, AccessLevel.SYSTEM_MODE);
 
         FSL.ScheduleResult result = FSL.ScheduleService.schedule(schedulingPolicyId, serviceAppointmentId);
 

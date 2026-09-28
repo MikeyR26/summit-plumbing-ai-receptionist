@@ -1,4 +1,6 @@
-public with sharing class AgentCustomerService {
+// without sharing: same reasoning as AgentSchedulingService -- backend integration API,
+// not a portal user restricted to their own records.
+public without sharing class AgentCustomerService {
 
     public static Map<String, Object> lookupCustomer(String phone, String email) {
         if (String.isBlank(phone) && String.isBlank(email)) {
@@ -13,6 +15,7 @@ public with sharing class AgentCustomerService {
                        Account.BillingStreet, Account.BillingCity, Account.BillingState, Account.BillingPostalCode
                 FROM Contact
                 WHERE Phone = :phone OR Phone = :digitsOnly
+                WITH SYSTEM_MODE
                 LIMIT 1
             ];
         } else {
@@ -21,6 +24,7 @@ public with sharing class AgentCustomerService {
                        Account.BillingStreet, Account.BillingCity, Account.BillingState, Account.BillingPostalCode
                 FROM Contact
                 WHERE Email = :email
+                WITH SYSTEM_MODE
                 LIMIT 1
             ];
         }
@@ -73,7 +77,7 @@ public with sharing class AgentCustomerService {
             ShippingPostalCode = postalCode,
             ShippingCountry = 'Canada'
         );
-        insert acc;
+        Database.insert(acc, AccessLevel.SYSTEM_MODE);
 
         Contact con = new Contact(
             AccountId = acc.Id,
@@ -87,7 +91,7 @@ public with sharing class AgentCustomerService {
             MailingPostalCode = postalCode,
             MailingCountry = 'Canada'
         );
-        insert con;
+        Database.insert(con, AccessLevel.SYSTEM_MODE);
 
         return new Map<String, Object>{
             'customerId' => con.Id,

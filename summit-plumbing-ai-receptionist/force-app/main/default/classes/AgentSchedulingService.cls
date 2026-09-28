@@ -5,7 +5,11 @@
 // draft WorkOrder/ServiceAppointment (see FSLFieldServiceScheduler). So the first call (no
 // serviceAppointmentId) creates the draft and returns status "pending"; the caller calls
 // getSlots again with that serviceAppointmentId to get status "ready" with real slots.
-public with sharing class AgentSchedulingService {
+// without sharing: this is a backend integration API acting on behalf of the whole org
+// (a dedicated OAuth integration user with no explicit sharing grants), not a portal user
+// restricted to their own records. Territory/address validation in this class is our own
+// business-rule enforcement; Salesforce record-level sharing isn't the right control here.
+public without sharing class AgentSchedulingService {
 
     public static Map<String, Object> getSlots(Id customerId, String jobType, Id serviceAppointmentId) {
         if (serviceAppointmentId != null) {
@@ -28,6 +32,7 @@ public with sharing class AgentSchedulingService {
                    Account.BillingPostalCode, Account.BillingCountry, Account.BillingLatitude, Account.BillingLongitude
             FROM Contact
             WHERE Id = :customerId
+            WITH SYSTEM_MODE
             LIMIT 1
         ];
         if (customers.isEmpty()) {
@@ -60,7 +65,7 @@ public with sharing class AgentSchedulingService {
             Latitude = cust.Account.BillingLatitude,
             Longitude = cust.Account.BillingLongitude
         );
-        insert wo;
+        Database.insert(wo, AccessLevel.SYSTEM_MODE);
 
         ServiceAppointment sa = new ServiceAppointment(
             ParentRecordId = wo.Id,
@@ -75,7 +80,7 @@ public with sharing class AgentSchedulingService {
             Latitude = cust.Account.BillingLatitude,
             Longitude = cust.Account.BillingLongitude
         );
-        insert sa;
+        Database.insert(sa, AccessLevel.SYSTEM_MODE);
 
         return new Map<String, Object>{
             'status' => 'pending',
@@ -85,7 +90,7 @@ public with sharing class AgentSchedulingService {
     }
 
     private static Map<String, Object> fetchSlotsForExistingAppointment(Id serviceAppointmentId) {
-        List<ServiceAppointment> existing = [SELECT Id FROM ServiceAppointment WHERE Id = :serviceAppointmentId LIMIT 1];
+        List<ServiceAppointment> existing = [SELECT Id FROM ServiceAppointment WHERE Id = :serviceAppointmentId WITH SYSTEM_MODE LIMIT 1];
         if (existing.isEmpty()) {
             throw new AgentApiException('Unknown serviceAppointmentId.');
         }
@@ -130,7 +135,7 @@ public with sharing class AgentSchedulingService {
             throw new AgentApiException(outcome.errorMessage);
         }
 
-        List<ServiceAppointment> saList = [SELECT Id, AppointmentNumber FROM ServiceAppointment WHERE Id = :serviceAppointmentId LIMIT 1];
+        List<ServiceAppointment> saList = [SELECT Id, AppointmentNumber FROM ServiceAppointment WHERE Id = :serviceAppointmentId WITH SYSTEM_MODE LIMIT 1];
         String confirmationNumber = saList.isEmpty() ? null : saList[0].AppointmentNumber;
 
         return new Map<String, Object>{
@@ -211,6 +216,7 @@ public with sharing class AgentSchedulingService {
             SELECT Id, Status, ParentRecordId
             FROM ServiceAppointment
             WHERE AppointmentNumber = :confirmationNumber
+            WITH SYSTEM_MODE
             LIMIT 1
         ];
         if (matches.isEmpty()) {
