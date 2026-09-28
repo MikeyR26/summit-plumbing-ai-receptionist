@@ -35,8 +35,25 @@ List<String> rows = new List<String>{
     'Kenji|Watanabe|604-555-0130|kenji.watanabe@example.com|9760 140th St|Surrey|V3T 4M2'
 };
 
+// Approximate city-center coordinates (not survey-precision) -- enough for
+// FSL's travel-time work rules/objectives to compute, which need non-null
+// geolocation on both the resource's home base and the appointment address.
+Map<String, List<Decimal>> cityCoords = new Map<String, List<Decimal>>{
+    'Vancouver' => new List<Decimal>{ 49.2827, -123.1207 },
+    'Richmond' => new List<Decimal>{ 49.1666, -123.1336 },
+    'Burnaby' => new List<Decimal>{ 49.2488, -122.9805 },
+    'Coquitlam' => new List<Decimal>{ 49.2838, -122.7932 },
+    'New Westminster' => new List<Decimal>{ 49.2057, -122.9110 },
+    'North Vancouver' => new List<Decimal>{ 49.3200, -123.0731 },
+    'West Vancouver' => new List<Decimal>{ 49.3283, -123.1594 },
+    'Surrey' => new List<Decimal>{ 49.1913, -122.8490 },
+    'Delta' => new List<Decimal>{ 49.0847, -123.0586 },
+    'Langley' => new List<Decimal>{ 49.1044, -122.6603 }
+};
+
 Integer created = 0;
 Integer skipped = 0;
+List<Account> toBackfill = new List<Account>();
 
 for (String row : rows) {
     List<String> f = row.split('\\|');
@@ -48,10 +65,19 @@ for (String row : rows) {
     String city = f[5];
     String postalCode = f[6];
     String accountName = firstName + ' ' + lastName;
+    Decimal lat = cityCoords.get(city)[0];
+    Decimal lng = cityCoords.get(city)[1];
 
-    List<Account> existing = [SELECT Id FROM Account WHERE Name = :accountName LIMIT 1];
+    List<Account> existing = [SELECT Id, BillingLatitude, BillingLongitude FROM Account WHERE Name = :accountName LIMIT 1];
     if (!existing.isEmpty()) {
         skipped++;
+        if (existing[0].BillingLatitude == null) {
+            existing[0].BillingLatitude = lat;
+            existing[0].BillingLongitude = lng;
+            existing[0].ShippingLatitude = lat;
+            existing[0].ShippingLongitude = lng;
+            toBackfill.add(existing[0]);
+        }
         continue;
     }
 
@@ -63,11 +89,15 @@ for (String row : rows) {
         BillingState = 'British Columbia',
         BillingPostalCode = postalCode,
         BillingCountry = 'Canada',
+        BillingLatitude = lat,
+        BillingLongitude = lng,
         ShippingStreet = street,
         ShippingCity = city,
         ShippingState = 'British Columbia',
         ShippingPostalCode = postalCode,
-        ShippingCountry = 'Canada'
+        ShippingCountry = 'Canada',
+        ShippingLatitude = lat,
+        ShippingLongitude = lng
     );
     insert acc;
 
@@ -88,4 +118,8 @@ for (String row : rows) {
     created++;
 }
 
-System.debug('=== DONE seeding customers: created=' + created + ' skipped=' + skipped + ' ===');
+if (!toBackfill.isEmpty()) {
+    update toBackfill;
+}
+
+System.debug('=== DONE seeding customers: created=' + created + ' skipped=' + skipped + ' backfilled=' + toBackfill.size() + ' ===');

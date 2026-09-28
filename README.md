@@ -91,11 +91,66 @@ which is fine for pre-existing historical demo data — the Phase 3 Apex REST
 API that the AI agent calls must **not** do this; it has to go through
 `FSL.ScheduleService` / `FSL.AppointmentBookingService`.
 
-**Nothing needed manual UI setup for this phase** — the FSL managed package
-already ships 4 default Scheduling Policies (Customer First, High Intensity,
-Soft Boundaries, Emergency) which Phase 3 will use for `FSL.ScheduleService`
-calls. "Emergency" conveniently lines up with the "Emergency Call-out" work
-type for later test scenarios.
+The FSL managed package already ships 4 default Scheduling Policies (Customer
+First, High Intensity, Soft Boundaries, Emergency) which Phase 3 uses for
+`FSL.ScheduleService` calls. "Emergency" conveniently lines up with the
+"Emergency Call-out" work type for later test scenarios.
+
+### Manual setup required before the scheduling engine works
+
+Discovered by live-testing `FSL.AppointmentBookingService`/`FSL.ScheduleService`
+before writing Phase 3's Apex — these can't be scripted (they're UI-only or
+license-gated actions):
+
+1. **Create the Field Service permission sets.** App Launcher → *Field Service
+   Admin* → *Field Service Settings* → *Permission Sets* → click "Create
+   Permissions" on each tile. This generates `FSL_Admin_Permissions`,
+   `FSL_Resource_Permissions`, `FSL_Dispatcher_Permissions`, etc. — none of
+   these exist by default even after installing the package.
+2. **Assign yourself `Field Service Admin Permissions` + `...License`** so
+   your own user can call FSL Apex while testing/developing:
+   ```
+   sf org assign permset --name FSL_Admin_Permissions --target-org summit-plumbing
+   sf org assign permset --name FSL_Admin_License --target-org summit-plumbing
+   ```
+3. **Turn OFF "Enhanced Scheduling and Optimization" (ESO).** Field Service
+   Settings → Optimization → Activation. It was mysteriously **on by default**
+   in this org, but has no authorized optimization user/profile connected —
+   every scheduling call fails with a generic `Schedule optimization
+   incomplete (System Code)` error until you turn it off. The classic
+   (non-ESO) engine computes synchronously in Apex and needs no external
+   service. Re-enabling ESO later would need its own OAuth-style setup (an
+   "Optimization Profile and User") — out of scope for this demo.
+
+**License cap that limits schedulable technicians to 2 of 4:** the FSL
+scheduling engine requires a `ServiceResource.RelatedRecordId` User to hold
+the "Field Service Scheduling" permission set license before
+`IsOptimizationCapable` can be set to `true` on their resource. This trial
+org has only **2** of those license seats. `scripts/apex/setup/02` assigns
+them to Dave Chen and Maria Santos; Kevin O'Brien and Priya Patel remain as
+real `ServiceResource` records (for a realistic-looking 4-person roster) but
+the FSL engine will never assign them work. Buying more licenses would lift
+this in a real org.
+
+### Verified FSL Apex behavior (for Phase 3)
+
+- `FSL.AppointmentBookingService.getSlots(saId, policyId, operatingHoursId, tz, exactAppointment)`
+  performs a real callout (travel-time lookup) — the ServiceAppointment it's
+  called against **must already be committed in a prior transaction** (no DML
+  earlier in the same transaction, or you get `System.CalloutException: You
+  have uncommitted work pending`). This is why the booking flow needs two
+  separate Apex REST endpoints, not one.
+- `FSL.ScheduleService.schedule(policyId, saId)` returns `null` on failure —
+  no exception, no error message. Call `FSL.ScheduleService.getAppointmentInsights()`
+  for a reason, though that method requires ESO and won't work with it off.
+- On success, `FSL.ScheduleResult` exposes `.Service` (the updated
+  ServiceAppointment) and `.Resource` (the assigned ServiceResource) — **not**
+  `.serviceAppointment`/`.serviceResource` as the official docs' property
+  table states (confirmed by compile error; likely a docs bug).
+- `schedule()` automatically creates the `AssignedResource` junction record —
+  no need to insert it manually.
+- `WorkType.TimeframeStart`/`TimeframeEnd` must be set (we use 0–14 days) or
+  `getSlots` searches a zero-width window and always returns empty.
 
 ## Running the demo
 

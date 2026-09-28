@@ -11,7 +11,52 @@
 
 Integer pacificOffsetHours = 7; // PDT (UTC-7). Would need to be 8 for PST (Nov-Mar).
 
+// Approximate city-center coordinates (not survey-precision) -- enough for
+// FSL's travel-time work rules/objectives to compute, which need non-null geolocation.
+Map<String, List<Decimal>> cityCoords = new Map<String, List<Decimal>>{
+    'Vancouver' => new List<Decimal>{ 49.2827, -123.1207 },
+    'Richmond' => new List<Decimal>{ 49.1666, -123.1336 },
+    'Burnaby' => new List<Decimal>{ 49.2488, -122.9805 },
+    'Coquitlam' => new List<Decimal>{ 49.2838, -122.7932 },
+    'New Westminster' => new List<Decimal>{ 49.2057, -122.9110 },
+    'North Vancouver' => new List<Decimal>{ 49.3200, -123.0731 },
+    'West Vancouver' => new List<Decimal>{ 49.3283, -123.1594 },
+    'Surrey' => new List<Decimal>{ 49.1913, -122.8490 },
+    'Delta' => new List<Decimal>{ 49.0847, -123.0586 },
+    'Langley' => new List<Decimal>{ 49.1044, -122.6603 }
+};
+
 ServiceTerritory territory = [SELECT Id FROM ServiceTerritory WHERE Name = 'Metro Vancouver' LIMIT 1];
+
+// Backfill geolocation on any previously-seeded appointments that predate this update.
+List<ServiceAppointment> saToBackfill = [
+    SELECT Id, City FROM ServiceAppointment
+    WHERE ServiceTerritoryId = :territory.Id AND Latitude = null AND City != null
+];
+if (!saToBackfill.isEmpty()) {
+    for (ServiceAppointment sa : saToBackfill) {
+        if (cityCoords.containsKey(sa.City)) {
+            sa.Latitude = cityCoords.get(sa.City)[0];
+            sa.Longitude = cityCoords.get(sa.City)[1];
+        }
+    }
+    update saToBackfill;
+    System.debug('Backfilled geolocation on ' + saToBackfill.size() + ' existing ServiceAppointments');
+}
+List<WorkOrder> woToBackfill = [
+    SELECT Id, City FROM WorkOrder
+    WHERE ServiceTerritoryId = :territory.Id AND Latitude = null AND City != null
+];
+if (!woToBackfill.isEmpty()) {
+    for (WorkOrder wo : woToBackfill) {
+        if (cityCoords.containsKey(wo.City)) {
+            wo.Latitude = cityCoords.get(wo.City)[0];
+            wo.Longitude = cityCoords.get(wo.City)[1];
+        }
+    }
+    update woToBackfill;
+    System.debug('Backfilled geolocation on ' + woToBackfill.size() + ' existing WorkOrders');
+}
 
 Map<String, Id> workTypeIds = new Map<String, Id>();
 for (WorkType wt : [SELECT Id, Name FROM WorkType WHERE Name IN ('Drain Cleaning', 'Water Heater Install', 'Leak Repair', 'Emergency Call-out')]) {
@@ -65,6 +110,9 @@ if (resources.size() != 4 || customers.size() < 20) {
             Integer startHourPacific = slotHours[i];
             Decimal durHours = durationHours.get(wtName);
             Integer durMinutes = (durHours * 60).intValue();
+            List<Decimal> coords = cityCoords.get(customer.Account.BillingCity);
+            Decimal custLat = coords != null ? coords[0] : null;
+            Decimal custLng = coords != null ? coords[1] : null;
 
             Time startTimeGmt = Time.newInstance(startHourPacific + pacificOffsetHours, 0, 0, 0);
             Datetime schedStart = Datetime.newInstanceGmt(d, startTimeGmt);
@@ -93,7 +141,9 @@ if (resources.size() != 4 || customers.size() < 20) {
                 City = customer.Account.BillingCity,
                 State = customer.Account.BillingState,
                 PostalCode = customer.Account.BillingPostalCode,
-                Country = customer.Account.BillingCountry
+                Country = customer.Account.BillingCountry,
+                Latitude = custLat,
+                Longitude = custLng
             );
             workOrdersToInsert.add(wo);
             plannedAppointments.add(new Map<String, Object>{
@@ -107,7 +157,9 @@ if (resources.size() != 4 || customers.size() < 20) {
                 'city' => customer.Account.BillingCity,
                 'state' => customer.Account.BillingState,
                 'postalCode' => customer.Account.BillingPostalCode,
-                'country' => customer.Account.BillingCountry
+                'country' => customer.Account.BillingCountry,
+                'lat' => custLat,
+                'lng' => custLng
             });
         }
     }
@@ -131,7 +183,9 @@ if (resources.size() != 4 || customers.size() < 20) {
                 City = (String) plan.get('city'),
                 State = (String) plan.get('state'),
                 PostalCode = (String) plan.get('postalCode'),
-                Country = (String) plan.get('country')
+                Country = (String) plan.get('country'),
+                Latitude = (Decimal) plan.get('lat'),
+                Longitude = (Decimal) plan.get('lng')
             ));
         }
         insert appointmentsToInsert;

@@ -3,6 +3,8 @@
 // ShouldAutoCreateSvcAppt = false: our Apex REST API (Phase 3) creates WorkOrder +
 // ServiceAppointment explicitly via the FSL scheduling engine, rather than relying on
 // WorkOrder-insert automation.
+// TimeframeStart/End = 0-14 days: without this, FSL.AppointmentBookingService.getSlots()
+// searches a zero-width window and always returns 0 results (found via live testing).
 // Idempotent: safe to rerun.
 
 ServiceTerritory st = [SELECT Id FROM ServiceTerritory WHERE Name = 'Metro Vancouver' LIMIT 1];
@@ -16,20 +18,33 @@ defs.add(new Map<String, Object>{ 'name' => 'Emergency Call-out', 'duration' => 
 for (Map<String, Object> def : defs) {
     String wtName = (String) def.get('name');
 
-    List<WorkType> existingWt = [SELECT Id FROM WorkType WHERE Name = :wtName LIMIT 1];
+    List<WorkType> existingWt = [SELECT Id, TimeframeStart, TimeframeEnd FROM WorkType WHERE Name = :wtName LIMIT 1];
     WorkType wt;
     if (existingWt.isEmpty()) {
         wt = new WorkType(
             Name = wtName,
             EstimatedDuration = (Decimal) def.get('duration'),
             DurationType = 'Hours',
-            ShouldAutoCreateSvcAppt = false
+            ShouldAutoCreateSvcAppt = false,
+            TimeframeStart = 0,
+            TimeframeEnd = 14,
+            TimeFrameStartUnit = 'Days',
+            TimeFrameEndUnit = 'Days'
         );
         insert wt;
         System.debug('Created WorkType: ' + wtName + ' -> ' + wt.Id);
     } else {
         wt = existingWt[0];
-        System.debug('WorkType already exists: ' + wtName + ' -> ' + wt.Id);
+        if (wt.TimeframeStart == null || wt.TimeframeEnd == null) {
+            wt.TimeframeStart = 0;
+            wt.TimeframeEnd = 14;
+            wt.TimeFrameStartUnit = 'Days';
+            wt.TimeFrameEndUnit = 'Days';
+            update wt;
+            System.debug('Backfilled scheduling timeframe on WorkType: ' + wtName);
+        } else {
+            System.debug('WorkType already exists: ' + wtName + ' -> ' + wt.Id);
+        }
     }
 
     List<ServiceTerritoryWorkType> existingStwt = [

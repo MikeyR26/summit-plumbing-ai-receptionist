@@ -39,8 +39,14 @@ if (existingSlots.isEmpty()) {
     System.debug('Time slots already exist (' + existingSlots.size() + ' found)');
 }
 
+// Approximate downtown Vancouver coordinates. Good enough for FSL travel-time
+// objectives/work rules (e.g. "Maximum Travel From Home"), which need SOME
+// geolocation to compute -- not survey-precision, just non-null.
+Decimal territoryLat = 49.2827;
+Decimal territoryLng = -123.1207;
+
 ServiceTerritory st;
-List<ServiceTerritory> existingSt = [SELECT Id FROM ServiceTerritory WHERE Name = :territoryName LIMIT 1];
+List<ServiceTerritory> existingSt = [SELECT Id, Latitude, Longitude FROM ServiceTerritory WHERE Name = :territoryName LIMIT 1];
 if (existingSt.isEmpty()) {
     st = new ServiceTerritory(
         Name = territoryName,
@@ -50,13 +56,22 @@ if (existingSt.isEmpty()) {
         City = 'Vancouver',
         State = 'British Columbia',
         PostalCode = 'V6Z 3B7',
-        Country = 'Canada'
+        Country = 'Canada',
+        Latitude = territoryLat,
+        Longitude = territoryLng
     );
     insert st;
     System.debug('Created ServiceTerritory: ' + st.Id);
 } else {
     st = existingSt[0];
-    System.debug('ServiceTerritory already exists: ' + st.Id);
+    if (st.Latitude == null || st.Longitude == null) {
+        st.Latitude = territoryLat;
+        st.Longitude = territoryLng;
+        update st;
+        System.debug('Backfilled geolocation on ServiceTerritory: ' + st.Id);
+    } else {
+        System.debug('ServiceTerritory already exists: ' + st.Id);
+    }
 }
 
 System.debug('=== DONE: OperatingHours=' + oh.Id + ' ServiceTerritory=' + st.Id + ' ===');
